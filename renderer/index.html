@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>Node-RED Launcher</title>
+<style>
+  :root {
+    --bg: #f3f1ee;
+    --panel: #ffffff;
+    --ink: #1f1d1b;
+    --muted: #6b665f;
+    --line: #dcd7d0;
+    --red: #8f0000;
+    --red-hover: #a80000;
+    --ok: #1d7a3e;
+    --warn: #b36b00;
+    --log-bg: #1c1b1a;
+    --log-ink: #e6e2db;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1918;
+      --panel: #242321;
+      --ink: #ece8e1;
+      --muted: #9a948b;
+      --line: #3a3835;
+      --red: #c23a3a;
+      --red-hover: #d44a4a;
+      --ok: #4cc07a;
+      --warn: #e0a040;
+      --log-bg: #121110;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.45 "Segoe UI", system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px 20px;
+  }
+
+  header { display: flex; align-items: center; gap: 16px; }
+  .status-dot {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--muted); flex: none;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--muted) 20%, transparent);
+  }
+  .status-dot.running { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .status-dot.working { background: var(--warn); box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 25%, transparent); }
+  @media (prefers-reduced-motion: no-preference) {
+    .status-dot.working { animation: pulse 1.2s ease-in-out infinite; }
+  }
+  @keyframes pulse { 50% { opacity: .45; } }
+
+  .title { flex: 1; min-width: 0; }
+  .title h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  .title p { margin: 2px 0 0; color: var(--muted); }
+
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  button {
+    font: inherit;
+    padding: 7px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
+  button.primary { background: var(--red); border-color: var(--red); color: #fff; }
+  button.primary:hover:not(:disabled) { background: var(--red-hover); border-color: var(--red-hover); }
+
+  .log-wrap { flex: 1; min-height: 140px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .log-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--line); color: var(--muted); }
+  .log-bar button { padding: 2px 10px; font-size: 12px; }
+  #log {
+    flex: 1; margin: 0; padding: 10px 12px; overflow: auto;
+    background: var(--log-bg); color: var(--log-ink);
+    font: 12px/1.5 Consolas, "Cascadia Mono", monospace;
+    white-space: pre-wrap; word-break: break-word;
+  }
+
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+  summary { cursor: pointer; font-weight: 600; }
+  .settings { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; margin-top: 12px; align-items: center; }
+  .settings label.check { display: flex; gap: 8px; align-items: center; }
+  .settings .field { display: flex; align-items: center; gap: 8px; }
+  input[type=number] { width: 90px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
+  .folders { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; }
+  .hint { grid-column: 1 / -1; color: var(--muted); font-size: 12px; margin: 0; }
+  @media (max-width: 560px) { .settings { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+  <header>
+    <div id="dot" class="status-dot" role="img" aria-label="Status"></div>
+    <div class="title">
+      <h1 id="statusText">Loading…</h1>
+      <p id="subText"></p>
+    </div>
+  </header>
+
+  <div class="actions">
+    <button id="btnInstall" class="primary">Install Node-RED</button>
+    <button id="btnStart">Start</button>
+    <button id="btnRestart">Restart</button>
+    <button id="btnStop">Stop</button>
+    <button id="btnEditor">Open editor</button>
+  </div>
+
+  <section class="log-wrap" aria-label="Log">
+    <div class="log-bar"><span>Log</span><button id="btnClear">Clear</button></div>
+    <pre id="log"></pre>
+  </section>
+
+  <details>
+    <summary>Settings</summary>
+    <div class="settings">
+      <div class="field">
+        <label for="port">Port</label>
+        <input id="port" type="number" min="1" max="65535">
+      </div>
+      <label class="check"><input id="autoStart" type="checkbox"> Start Node-RED when the launcher opens</label>
+      <label class="check"><input id="loginItem" type="checkbox"> Open the launcher when I sign in to Windows</label>
+      <label class="check"><input id="closeToTray" type="checkbox"> Keep running in the tray when I close the window</label>
+      <div class="folders">
+        <button id="btnUserDir">Open flows folder</button>
+        <button id="btnInstallDir">Open install folder</button>
+      </div>
+      <p class="hint">Port changes apply the next time Node-RED starts.</p>
+    </div>
+  </details>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
