@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "description": "A simple Windows launcher for installing, starting and restarting Node-RED",
   "main": "main.js",
+  "type": "module",
+  "author": {"name": "Zachary Klosko", "email": "zklosko@hopecentral.com", "url": "https://zklosko.github.io"},
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win"

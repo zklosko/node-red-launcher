@@ -1,15 +1,17 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog } = require('electron');
-const { spawn, execFile } = require('child_process');
-const path = require('path');
-const fs = require('fs');
-const https = require('https');
+import { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog } from 'electron';
+import { spawn, execFile } from 'node:child_process';
+import path from 'node:path';
+import fs from 'node:fs';
+import https from 'node:https';
+
+const __dirname = import.meta.dirname
 
 // ---------------------------------------------------------------------------
 // Single instance
 // ---------------------------------------------------------------------------
 if (!app.requestSingleInstanceLock()) {
   app.quit();
-  return;
+  process.exit(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -341,7 +343,7 @@ function createWindow() {
     backgroundColor: '#f3f1ee',
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -410,7 +412,10 @@ ipcMain.handle('set-settings', (_e, patch) => {
 // ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
-app.on('second-instance', showWindow);
+app.on('second-instance', () => {
+  log('Launcher was already running in system tray; showing the existing window.')
+  showWindow()
+});
 
 app.whenReady().then(() => {
   loadSettings();
