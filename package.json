@@ -3,21 +3,28 @@
   "productName": "Node-RED Launcher",
   "version": "0.1.0",
   "description": "A simple Windows launcher for installing, starting and restarting Node-RED",
-  "main": "main.js",
+  "main": "dist/main.js",
   "type": "module",
-  "author": {"name": "Zachary Klosko", "email": "zklosko@hopecentral.com", "url": "https://zklosko.github.io"},
+  "author": {
+    "name": "Zachary Klosko",
+    "email": "zklosko@hopecentral.com",
+    "url": "https://zklosko.github.io"
+  },
   "scripts": {
-    "start": "electron .",
-    "dist": "electron-builder --win"
+    "build": "tsc -p tsconfig.main.json && tsc -p tsconfig.renderer.json",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --win"
   },
   "devDependencies": {
+    "@types/node": "24",
     "electron": "^45.2.3",
-    "electron-builder": "^26.18.0"
+    "electron-builder": "^26.18.0",
+    "typescript": "^7.0.2"
   },
   "build": {
     "appId": "com.zklosko.nodered-launcher",
     "productName": "Node-RED Launcher",
-    "files": ["main.js", "preload.js", "renderer/**", "assets/**"],
+    "files": ["dist/**", "renderer/index.html", "assets/**"],
     "win": {
       "target": "nsis",
       "icon": "assets/icon.png"

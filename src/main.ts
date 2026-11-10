@@ -1,9 +1,9 @@
 import { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog } from 'electron';
-import { spawn, execFile } from 'node:child_process';
+import { spawn, ChildProcess, SpawnOptions } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
-import https from 'node:https';
-
+import { LauncherState, RedStatus, RuntimeSource, Settings, NodeRelease } from './shared/types.js';
+import { download, envWith, errorMessage, getJSON, run } from './helpers.js';
 const __dirname = import.meta.dirname
 
 // ---------------------------------------------------------------------------
@@ -24,7 +24,7 @@ const installDir = path.join(baseDir, 'node-red');           // npm --prefix tar
 const redJs = path.join(installDir, 'node_modules', 'node-red', 'red.js');
 const settingsFile = path.join(baseDir, 'launcher-settings.json');
 
-const defaults = {
+const defaults: Settings = {
   port: 1880,
   userDir: path.join(baseDir, 'userdir'),   // flows, credentials, settings.js, installed palette nodes
   autoStartNodeRed: false,
@@ -46,15 +46,15 @@ function saveSettings() {
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-let win = null;
-let tray = null;
+let win: BrowserWindow | null = null;
+let tray: Tray | null = null;
 let quitting = false;
 
-let redProc = null;
-let redStatus = 'stopped';      // stopped | starting | running | stopping
-let busy = null;                // null | string describing a long task (installing, downloading...)
-let latestVersion = null;
-const logBuffer = [];
+let redProc: ChildProcess | null = null;
+let redStatus: RedStatus = 'stopped';      // stopped | starting | running | stopping
+let busy: string | null = null;                // null | string describing a long task (installing, downloading...)
+let latestVersion: string | null = null;
+const logBuffer: string[] = [];
 const MAX_LOG = 2000;
 
 function installedVersion() {
@@ -63,7 +63,7 @@ function installedVersion() {
   } catch { return null; }
 }
 
-function getState() {
+function getState(): LauncherState {
   return {
     redStatus,
     busy,
@@ -81,7 +81,7 @@ function emitState() {
 }
 
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
-function log(text) {
+function log(text: string) {
   for (const raw of String(text).split(/\r?\n/)) {
     const line = raw.replace(ANSI, '');
     if (!line.trim()) continue;
@@ -91,76 +91,35 @@ function log(text) {
   }
 }
 
-function setBusy(msg) {
+function setBusy(msg: string | null) {
   busy = msg;
   emitState();
 }
 
 // ---------------------------------------------------------------------------
-// Small helpers
-// ---------------------------------------------------------------------------
-function run(cmd, args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, { windowsHide: true, ...opts }, (err, stdout, stderr) => {
-      if (err) reject(err); else resolve(stdout.toString());
-    });
-  });
-}
-
-function getJSON(url) {
-  return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'nodered-launcher' } }, (res) => {
-      if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode} for ${url}`)); }
-      let data = '';
-      res.setEncoding('utf8');
-      res.on('data', (c) => (data += c));
-      res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
-    }).on('error', reject);
-  });
-}
-
-function download(url, dest, onProgress) {
-  return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
-      if ([301, 302, 307, 308].includes(res.statusCode)) {
-        res.resume();
-        return resolve(download(new URL(res.headers.location, url).toString(), dest, onProgress));
-      }
-      if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
-      const total = Number(res.headers['content-length']) || 0;
-      let got = 0;
-      const file = fs.createWriteStream(dest);
-      res.on('data', (c) => { got += c.length; if (total) onProgress(Math.round((got / total) * 100)); });
-      res.pipe(file);
-      file.on('finish', () => file.close(resolve));
-      file.on('error', reject);
-    }).on('error', reject);
-  });
-}
-
-function envWith(rt) {
-  const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
-  const key = Object.keys(env).find((k) => k.toLowerCase() === 'path') || 'PATH';
-  env[key] = rt.dir + path.delimiter + (env[key] || '');
-  return env;
-}
-
-// ---------------------------------------------------------------------------
 // Node.js runtime: use the managed copy, else a system Node >= 18, else null
 // ---------------------------------------------------------------------------
-function makeRuntime(nodeExe, source) {
+function makeRuntime(nodeExe: string, source: RuntimeSource) {
   const dir = path.dirname(nodeExe);
   const npmCli = path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
   if (!fs.existsSync(npmCli)) return null;
   return { nodeExe, npmCli, dir, source };
 }
 
+function lookupCommand(): string {
+  switch(process.platform) {
+    case 'win32': return 'where';
+    case 'darwin':
+    case 'linux': return 'which';
+    default: throw new Error(`Unsupported platform: ${process.platform}`)
+  }
+}
+
 async function resolveRuntime() {
   const managed = path.join(runtimeDir, 'node', 'node.exe');
   if (fs.existsSync(managed)) return makeRuntime(managed, 'managed');
   try {
-    const where = (await run(process.platform === 'win32' ? 'where' : 'which', ['node'])).split(/\r?\n/)[0].trim();
+    const where: string = (await run(lookupCommand(), ['node'])).split(/\r?\n/)[0].trim();
     const major = parseInt((await run(where, ['-v'])).trim().replace('v', ''), 10);
     if (where && major >= 18) return makeRuntime(where, 'system');
   } catch { /* no system node */ }
@@ -173,10 +132,10 @@ async function downloadRuntime() {
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
   let version = 'v20.18.0';
   try {
-    const index = await getJSON('https://nodejs.org/dist/index.json');
+    const index = await getJSON<NodeRelease[]>('https://nodejs.org/dist/index.json');
     const hit = index.find((r) => r.lts && r.version.startsWith('v20.'));
     if (hit) version = hit.version;
-  } catch (e) { log(`Could not read the Node.js release index (${e.message}). Falling back to ${version}.`); }
+  } catch (e) { log(`Could not read the Node.js release index (${errorMessage(e)}). Falling back to ${version}.`); }
 
   fs.mkdirSync(runtimeDir, { recursive: true });
   const zip = path.join(runtimeDir, 'node.zip');
@@ -209,19 +168,19 @@ async function ensureRuntime() {
 // ---------------------------------------------------------------------------
 // Install / update Node-RED
 // ---------------------------------------------------------------------------
-function spawnLogged(cmd, args, opts) {
+function spawnLogged(cmd: string, args: string[], opts: SpawnOptions) {
   return new Promise((resolve) => {
     const p = spawn(cmd, args, { windowsHide: true, ...opts });
-    p.stdout.on('data', (d) => log(d));
-    p.stderr.on('data', (d) => log(d));
+    p.stdout?.on('data', (d) => log(d));
+    p.stderr?.on('data', (d) => log(d));
     p.on('error', (e) => { log(`Error: ${e.message}`); resolve(-1); });
     p.on('exit', (code) => resolve(code));
   });
 }
 
-async function checkLatest() {
+async function checkLatest(): Promise<void> {
   try {
-    const info = await getJSON('https://registry.npmjs.org/node-red/latest');
+    const info = await getJSON<{ version: string}>('https://registry.npmjs.org/node-red/latest');
     latestVersion = info.version;
   } catch { /* offline is fine */ }
   emitState();
@@ -250,8 +209,8 @@ async function installNodeRed() {
     if (code !== 0) throw new Error(`npm exited with code ${code}`);
     log(`Node-RED ${installedVersion()} installed.`);
   } catch (e) {
-    log(`Install failed: ${e.message}`);
-    dialog.showErrorBox('Install failed', `${e.message}\n\nSee the log for details.`);
+    log(`Install failed: ${errorMessage(e)}`);
+    dialog.showErrorBox('Install failed', `${errorMessage(e)}\n\nSee the log for details.`);
   } finally {
     setBusy(null);
     checkLatest();
@@ -280,7 +239,7 @@ async function startRed() {
   );
   redProc = proc;
 
-  const onData = (d) => {
+  const onData = (d: any) => {
     const text = d.toString();
     log(text);
     if (redStatus === 'starting' && /Server now running at/i.test(text)) {
@@ -300,9 +259,9 @@ async function startRed() {
 }
 
 function stopRed() {
-  return new Promise((resolve) => {
+  return new Promise<void>((resolve) => {
     const proc = redProc;
-    if (!proc) return resolve();
+    if (proc?.pid === undefined) return resolve();
     redStatus = 'stopping';
     emitState();
     proc.once('exit', () => resolve());
@@ -330,7 +289,7 @@ function openEditor() {
 // ---------------------------------------------------------------------------
 // Window & tray
 // ---------------------------------------------------------------------------
-const iconPath = path.join(__dirname, 'assets', 'icon.png');
+const iconPath = path.join(__dirname, '..', 'assets', 'icon.png');
 
 function createWindow() {
   win = new BrowserWindow({
@@ -349,16 +308,16 @@ function createWindow() {
     },
   });
   win.setMenu(null);
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   win.on('close', (e) => {
-    if (!quitting && settings.closeToTray) { e.preventDefault(); win.hide(); }
+    if (!quitting && settings.closeToTray) { e.preventDefault(); win?.hide(); }
   });
 }
 
 function showWindow() {
   if (!win || win.isDestroyed()) createWindow();
-  win.show();
-  win.focus();
+  win?.show();
+  win?.focus();
 }
 
 function buildTrayMenu() {
@@ -399,10 +358,10 @@ ipcMain.handle('open-folder', (_e, which) => {
   shell.openPath(target);
 });
 ipcMain.handle('clear-log', () => { logBuffer.length = 0; });
-ipcMain.handle('set-settings', (_e, patch) => {
+ipcMain.handle('set-settings', (_e, patch: Settings) => {
   const portChanged = patch.port !== undefined && patch.port !== settings.port;
   settings = { ...settings, ...patch };
-  settings.port = Math.min(65535, Math.max(1, parseInt(settings.port, 10) || 1880));
+  settings.port = Math.min(65535, Math.max(1, Math.trunc(Number(settings.port)) || 1880));
   saveSettings();
   app.setLoginItemSettings({ openAtLogin: !!settings.launchAtLogin });
   emitState();
