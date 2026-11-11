@@ -36,17 +36,3 @@ export interface GetStateResult {
   state: LauncherState
   logs: string[]
 }
-
-export interface LauncherAPI {
-  getState(): Promise<GetStateResult>
-  start(): Promise<void>
-  stop(): Promise<void>
-  restart(): Promise<void>
-  install(): Promise<void>
-  openEditor(): Promise<void>
-  openFolder(which: 'user' | 'install'): Promise<void>
-  clearLog(): Promise<void>
-  setSettings(patch: Partial<Settings>): Promise<void>
-  onState(cb: (state: LauncherState) => void): void
-  onLog(cb: (line: string) => void): void
-}

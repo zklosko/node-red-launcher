@@ -1,5 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { LauncherAPI, LauncherState } from './shared/types.js';
+import type { GetStateResult, LauncherState, Settings } from './shared/types.js';
+
+interface LauncherAPI {
+  getState(): Promise<GetStateResult>
+  start(): Promise<void>
+  stop(): Promise<void>
+  restart(): Promise<void>
+  install(): Promise<void>
+  openEditor(): Promise<void>
+  openFolder(which: 'user' | 'install'): Promise<void>
+  clearLog(): Promise<void>
+  setSettings(patch: Partial<Settings>): Promise<void>
+  onState(cb: (state: LauncherState) => void): void
+  onLog(cb: (line: string) => void): void
+}
 
 const api: LauncherAPI = {
   getState: () => ipcRenderer.invoke('get-state'),
