@@ -1,7 +1,7 @@
 {
   "name": "nodered-launcher",
   "productName": "Node-RED Launcher",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A simple Windows launcher for installing, starting and restarting Node-RED",
   "main": "dist/main.js",
   "type": "module",
@@ -24,7 +24,8 @@
   "build": {
     "appId": "com.zklosko.nodered-launcher",
     "productName": "Node-RED Launcher",
-    "files": ["dist/**", "renderer/index.html", "assets/**"],
+    "directories": { "output": "release" },
+    "files": ["dist/**", "renderer/**", "assets/**"],
     "win": {
       "target": "nsis",
       "icon": "assets/icon.png"
