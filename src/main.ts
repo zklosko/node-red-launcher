@@ -57,7 +57,7 @@ let latestVersion: string | null = null;
 const logBuffer: string[] = [];
 const MAX_LOG = 2000;
 
-function installedVersion() {
+function installedVersion(): string | null {
   try {
     return JSON.parse(fs.readFileSync(path.join(installDir, 'node_modules', 'node-red', 'package.json'), 'utf8')).version;
   } catch { return null; }
@@ -168,7 +168,7 @@ async function ensureRuntime() {
 // ---------------------------------------------------------------------------
 // Install / update Node-RED
 // ---------------------------------------------------------------------------
-function spawnLogged(cmd: string, args: string[], opts: SpawnOptions) {
+function spawnLogged(cmd: string, args: string[], opts: SpawnOptions): Promise<number | null> {
   return new Promise((resolve) => {
     const p = spawn(cmd, args, { windowsHide: true, ...opts });
     p.stdout?.on('data', (d) => log(d));
@@ -239,7 +239,7 @@ async function startRed() {
   );
   redProc = proc;
 
-  const onData = (d: any) => {
+  const onData = (d: Buffer) => {
     const text = d.toString();
     log(text);
     if (redStatus === 'starting' && /Server now running at/i.test(text)) {
