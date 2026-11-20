@@ -2,8 +2,9 @@ import { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, dialog } f
 import { spawn, ChildProcess, SpawnOptions } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
-import { LauncherState, RedStatus, RuntimeSource, Settings, NodeRelease } from './shared/types.js';
-import { download, envWith, errorMessage, getJSON, run } from './helpers.js';
+import { LauncherState, RedStatus, Settings } from './shared/types.js';
+import { envWith, errorMessage, getJSON } from './helpers.js';
+import { ensureRuntime, resolveRuntime } from './runtime.js';
 const __dirname = import.meta.dirname
 
 // ---------------------------------------------------------------------------
@@ -81,7 +82,7 @@ function emitState() {
 }
 
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
-function log(text: string) {
+export function log(text: string) {
   for (const raw of String(text).split(/\r?\n/)) {
     const line = raw.replace(ANSI, '');
     if (!line.trim()) continue;
@@ -91,78 +92,9 @@ function log(text: string) {
   }
 }
 
-function setBusy(msg: string | null) {
+export function setBusy(msg: string | null) {
   busy = msg;
   emitState();
-}
-
-// ---------------------------------------------------------------------------
-// Node.js runtime: use the managed copy, else a system Node >= 18, else null
-// ---------------------------------------------------------------------------
-function makeRuntime(nodeExe: string, source: RuntimeSource) {
-  const dir = path.dirname(nodeExe);
-  const npmCli = path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
-  if (!fs.existsSync(npmCli)) return null;
-  return { nodeExe, npmCli, dir, source };
-}
-
-function lookupCommand(): string {
-  switch(process.platform) {
-    case 'win32': return 'where';
-    case 'darwin':
-    case 'linux': return 'which';
-    default: throw new Error(`Unsupported platform: ${process.platform}`)
-  }
-}
-
-async function resolveRuntime() {
-  const managed = path.join(runtimeDir, 'node', 'node.exe');
-  if (fs.existsSync(managed)) return makeRuntime(managed, 'managed');
-  try {
-    const where: string = (await run(lookupCommand(), ['node'])).split(/\r?\n/)[0].trim();
-    const major = parseInt((await run(where, ['-v'])).trim().replace('v', ''), 10);
-    if (where && major >= 18) return makeRuntime(where, 'system');
-  } catch { /* no system node */ }
-  return null;
-}
-
-async function downloadRuntime() {
-  if (process.platform !== 'win32') throw new Error('Automatic Node.js download is only supported on Windows. Install Node.js 18+ manually.');
-  setBusy('Finding the latest Node.js 20 LTS…');
-  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-  let version = 'v20.18.0';
-  try {
-    const index = await getJSON<NodeRelease[]>('https://nodejs.org/dist/index.json');
-    const hit = index.find((r) => r.lts && r.version.startsWith('v20.'));
-    if (hit) version = hit.version;
-  } catch (e) { log(`Could not read the Node.js release index (${errorMessage(e)}). Falling back to ${version}.`); }
-
-  fs.mkdirSync(runtimeDir, { recursive: true });
-  const zip = path.join(runtimeDir, 'node.zip');
-  const url = `https://nodejs.org/dist/${version}/node-${version}-win-${arch}.zip`;
-  log(`Downloading Node.js ${version} (${arch})…`);
-  let last = -1;
-  await download(url, zip, (pct) => {
-    if (pct !== last && pct % 5 === 0) { last = pct; setBusy(`Downloading Node.js ${version}… ${pct}%`); }
-  });
-
-  setBusy('Unpacking Node.js…');
-  log('Unpacking Node.js…');
-  await run('powershell.exe', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${zip}' -DestinationPath '${runtimeDir}' -Force`]);
-  const target = path.join(runtimeDir, 'node');
-  fs.rmSync(target, { recursive: true, force: true });
-  fs.renameSync(path.join(runtimeDir, `node-${version}-win-${arch}`), target);
-  fs.rmSync(zip, { force: true });
-  log(`Node.js ${version} is ready.`);
-}
-
-async function ensureRuntime() {
-  let rt = await resolveRuntime();
-  if (rt) return rt;
-  await downloadRuntime();
-  rt = await resolveRuntime();
-  if (!rt) throw new Error('Node.js runtime could not be set up.');
-  return rt;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,7 +124,7 @@ async function installNodeRed() {
   try {
     if (wasRunning) await stopRed();
     setBusy('Preparing Node.js…');
-    const rt = await ensureRuntime();
+    const rt = await ensureRuntime(runtimeDir);
     log(`Using Node.js (${rt.source}): ${rt.nodeExe}`);
 
     fs.mkdirSync(installDir, { recursive: true });
@@ -224,7 +156,7 @@ async function installNodeRed() {
 async function startRed() {
   if (redProc || busy) return;
   if (!installedVersion()) { log('Node-RED is not installed yet.'); return; }
-  const rt = await resolveRuntime();
+  const rt = await resolveRuntime(runtimeDir);
   if (!rt) { log('No Node.js runtime found. Click "Install Node-RED" to set one up.'); return; }
 
   fs.mkdirSync(settings.userDir, { recursive: true });
