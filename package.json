@@ -1,8 +1,8 @@
 {
   "name": "nodered-launcher",
   "productName": "Node-RED Launcher",
-  "version": "0.2.0",
-  "description": "A simple Windows launcher for installing, starting and restarting Node-RED",
+  "version": "0.1.1",
+  "description": "A Windows launcher for installing and running Node-RED",
   "main": "dist/main.js",
   "type": "module",
   "author": {

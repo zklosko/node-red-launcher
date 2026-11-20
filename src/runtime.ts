@@ -7,9 +7,6 @@ import { log, setBusy } from './main.js';
 const minNodeVersion = 22;
 const fallbackLTSVersion = 'v22.23.5';
 
-// ---------------------------------------------------------------------------
-// Node.js runtime: use the managed copy, else a system Node >= 18, else null
-// ---------------------------------------------------------------------------
 function makeRuntime(nodeExe: string, source: RuntimeSource) {
   const dir = path.dirname(nodeExe);
   const npmCli = path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
@@ -37,7 +34,6 @@ export async function resolveRuntime(runtimeDir: string) {
   return null;
 }
 
-// This whole function needs to be reworked. Too many variables are hardcoded
 async function downloadRuntime(runtimeDir: string) {
   if (process.platform !== 'win32') throw new Error('Automatic Node.js download is only supported on Windows. Install Node.js 22+ manually.');
   setBusy('Finding the latest Node.js 22 LTS…');

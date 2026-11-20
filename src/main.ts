@@ -7,18 +7,14 @@ import { envWith, errorMessage, getJSON } from './helpers.js';
 import { ensureRuntime, resolveRuntime } from './runtime.js';
 const __dirname = import.meta.dirname
 
-// ---------------------------------------------------------------------------
 // Single instance
-// ---------------------------------------------------------------------------
 if (!app.requestSingleInstanceLock()) {
   app.quit();
   process.exit(0);
 }
 
-// ---------------------------------------------------------------------------
 // Paths & settings
 // Everything lives under %APPDATA%\Node-RED Launcher so no admin rights needed.
-// ---------------------------------------------------------------------------
 const baseDir = app.getPath('userData');
 const runtimeDir = path.join(baseDir, 'runtime');            // portable Node.js (if no system Node)
 const installDir = path.join(baseDir, 'node-red');           // npm --prefix target
@@ -44,9 +40,7 @@ function saveSettings() {
   fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
 }
 
-// ---------------------------------------------------------------------------
 // State
-// ---------------------------------------------------------------------------
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
@@ -97,9 +91,7 @@ export function setBusy(msg: string | null) {
   emitState();
 }
 
-// ---------------------------------------------------------------------------
 // Install / update Node-RED
-// ---------------------------------------------------------------------------
 function spawnLogged(cmd: string, args: string[], opts: SpawnOptions): Promise<number | null> {
   return new Promise((resolve) => {
     const p = spawn(cmd, args, { windowsHide: true, ...opts });
@@ -150,9 +142,7 @@ async function installNodeRed() {
   if (wasRunning && installedVersion()) startRed();
 }
 
-// ---------------------------------------------------------------------------
 // Start / stop / restart Node-RED
-// ---------------------------------------------------------------------------
 async function startRed() {
   if (redProc || busy) return;
   if (!installedVersion()) { log('Node-RED is not installed yet.'); return; }
@@ -218,9 +208,7 @@ function openEditor() {
   shell.openExternal(`http://localhost:${settings.port}`);
 }
 
-// ---------------------------------------------------------------------------
 // Window & tray
-// ---------------------------------------------------------------------------
 const iconPath = path.join(__dirname, '..', 'assets', 'icon.png');
 
 function createWindow() {
@@ -275,9 +263,7 @@ function createTray() {
   buildTrayMenu();
 }
 
-// ---------------------------------------------------------------------------
 // IPC
-// ---------------------------------------------------------------------------
 ipcMain.handle('get-state', () => ({ state: getState(), logs: logBuffer }));
 ipcMain.handle('start', () => startRed());
 ipcMain.handle('stop', () => stopRed());
@@ -300,9 +286,7 @@ ipcMain.handle('set-settings', (_e, patch: Settings) => {
   if (portChanged && redProc) log('Port changed. Restart Node-RED to apply it.');
 });
 
-// ---------------------------------------------------------------------------
 // App lifecycle
-// ---------------------------------------------------------------------------
 app.on('second-instance', () => {
   log('Launcher was already running in system tray; showing the existing window.')
   showWindow()
