@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { LauncherState, RedStatus, Settings } from './shared/types.js';
 import { envWith, errorMessage, getJSON } from './helpers.js';
 import { ensureRuntime, resolveRuntime } from './runtime.js';
+import { log, getBusy, onLog, onBusy, getLogs, initLogger, setBusy, clearLogs } from './logger.js';
 const __dirname = import.meta.dirname
 
 // Single instance
@@ -47,10 +48,7 @@ let quitting = false;
 
 let redProc: ChildProcess | null = null;
 let redStatus: RedStatus = 'stopped';      // stopped | starting | running | stopping
-let busy: string | null = null;                // null | string describing a long task (installing, downloading...)
 let latestVersion: string | null = null;
-const logBuffer: string[] = [];
-const MAX_LOG = 2000;
 
 function installedVersion(): string | null {
   try {
@@ -61,7 +59,7 @@ function installedVersion(): string | null {
 function getState(): LauncherState {
   return {
     redStatus,
-    busy,
+    busy: getBusy(),
     installedVersion: installedVersion(),
     latestVersion,
     port: settings.port,
@@ -73,22 +71,6 @@ function getState(): LauncherState {
 function emitState() {
   if (win && !win.isDestroyed()) win.webContents.send('state', getState());
   buildTrayMenu();
-}
-
-const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
-export function log(text: string) {
-  for (const raw of String(text).split(/\r?\n/)) {
-    const line = raw.replace(ANSI, '');
-    if (!line.trim()) continue;
-    logBuffer.push(line);
-    if (logBuffer.length > MAX_LOG) logBuffer.shift();
-    if (win && !win.isDestroyed()) win.webContents.send('log', line);
-  }
-}
-
-export function setBusy(msg: string | null) {
-  busy = msg;
-  emitState();
 }
 
 // Install / update Node-RED
@@ -111,12 +93,12 @@ async function checkLatest(): Promise<void> {
 }
 
 async function installNodeRed() {
-  if (busy) return;
+  if (getBusy()) return;
   const wasRunning = redStatus === 'running' || redStatus === 'starting';
   try {
     if (wasRunning) await stopRed();
     setBusy('Preparing Node.js…');
-    const rt = await ensureRuntime(runtimeDir);
+    const rt = await ensureRuntime(runtimeDir, { log, setBusy });
     log(`Using Node.js (${rt.source}): ${rt.nodeExe}`);
 
     fs.mkdirSync(installDir, { recursive: true });
@@ -144,7 +126,7 @@ async function installNodeRed() {
 
 // Start / stop / restart Node-RED
 async function startRed() {
-  if (redProc || busy) return;
+  if (redProc || getBusy()) return;
   if (!installedVersion()) { log('Node-RED is not installed yet.'); return; }
   const rt = await resolveRuntime(runtimeDir);
   if (!rt) { log('No Node.js runtime found. Click "Install Node-RED" to set one up.'); return; }
@@ -214,10 +196,7 @@ function stopRed() {
       setTimeout(() => {
         spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true });
         setTimeout(done, 1000)
-      }, 8000)
-      
-        // /T kills the whole process tree (Exec nodes, child scripts, etc.)
-        spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true });
+      }, 8000)      
     } else {
       proc.kill('SIGTERM');
     }
@@ -226,7 +205,7 @@ function stopRed() {
 }
 
 async function restartRed() {
-  if (busy) return;
+  if (getBusy()) return;
   log('Restarting Node-RED…');
   await stopRed();
   await startRed();
@@ -272,13 +251,13 @@ function buildTrayMenu() {
   if (!tray) return;
   const running = redStatus === 'running' || redStatus === 'starting';
   const installed = !!installedVersion();
-  tray.setToolTip(`Node-RED Launcher — ${busy ? 'working…' : redStatus}`);
+  tray.setToolTip(`Node-RED Launcher — ${getBusy() ? 'working…' : redStatus}`);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Show launcher', click: showWindow },
     { label: 'Open editor', enabled: redStatus === 'running', click: openEditor },
     { type: 'separator' },
-    { label: 'Start', enabled: installed && !running && !busy, click: startRed },
-    { label: 'Restart', enabled: running && !busy, click: restartRed },
+    { label: 'Start', enabled: installed && !running && !getBusy(), click: startRed },
+    { label: 'Restart', enabled: running && !getBusy(), click: restartRed },
     { label: 'Stop', enabled: running, click: stopRed },
     { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
@@ -292,7 +271,7 @@ function createTray() {
 }
 
 // IPC
-ipcMain.handle('get-state', () => ({ state: getState(), logs: logBuffer }));
+ipcMain.handle('get-state', () => ({ state: getState(), logs: getLogs() }));
 ipcMain.handle('start', () => startRed());
 ipcMain.handle('stop', () => stopRed());
 ipcMain.handle('restart', () => restartRed());
@@ -303,8 +282,8 @@ ipcMain.handle('open-folder', (_e, which) => {
   fs.mkdirSync(target, { recursive: true });
   shell.openPath(target);
 });
-ipcMain.handle('clear-log', () => { logBuffer.length = 0; });
-ipcMain.handle('set-settings', (_e, patch: Settings) => {
+ipcMain.handle('clear-log', () => { clearLogs() });
+ipcMain.handle('set-settings', (_e, patch: Partial<Settings>) => {
   const portChanged = patch.port !== undefined && patch.port !== settings.port;
   settings = { ...settings, ...patch };
   settings.port = Math.min(65535, Math.max(1024, Math.trunc(Number(settings.port)) || 1880));
@@ -322,6 +301,18 @@ app.on('second-instance', () => {
 
 app.whenReady().then(() => {
   loadSettings();
+  initLogger({ logFile: path.join(baseDir, 'launcher.log') })
+
+  onLog((line) => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('log', line)
+    }
+  })
+
+  onBusy(() => {
+    emitState()
+  })
+
   app.setLoginItemSettings({ openAtLogin: !!settings.launchAtLogin });
   createWindow();
   createTray();
