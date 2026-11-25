@@ -24,7 +24,9 @@
   "build": {
     "appId": "com.zklosko.nodered-launcher",
     "productName": "Node-RED Launcher",
-    "directories": { "output": "release" },
+    "directories": {
+      "output": "release"
+    },
     "files": ["dist/**", "renderer/**", "assets/**"],
     "win": {
       "target": "nsis",
@@ -35,5 +37,8 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true
     }
+  },
+  "dependencies": {
+    "extract-zip": "^2.0.1"
   }
 }
