@@ -171,7 +171,14 @@ async function startRed() {
   };
   proc.stdout.on('data', onData);
   proc.stderr.on('data', onData);
-  proc.on('error', (e) => log(`Failed to launch: ${e.message}`));
+  proc.on('error', (e) => {
+    log(`Failed to launch: ${e.message}`);
+    if (redProc === proc) {
+      redProc = null;
+      redStatus = 'stopped';
+      emitState()
+    }
+  })
   proc.on('exit', (code, signal) => {
     log(`Node-RED stopped (${signal || 'exit code ' + code}).`);
     if (redProc === proc) redProc = null;
@@ -184,12 +191,33 @@ function stopRed() {
   return new Promise<void>((resolve) => {
     const proc = redProc;
     if (proc?.pid === undefined) return resolve();
+
     redStatus = 'stopping';
     emitState();
-    proc.once('exit', () => resolve());
+
+    let settled = false;
+    const done = () => {
+      if (settled) return
+      settled = true
+      if (redProc === proc) redProc = null
+      redStatus = 'stopped'
+      emitState()
+      resolve()
+    }
+
+    proc.once('exit', done);
+
     if (process.platform === 'win32') {
-      // /T kills the whole process tree (Exec nodes, child scripts, etc.)
-      spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true });
+      const graceful = spawn('taskkill', ['/PID', String(proc.pid), '/T'], { windowsHide: true })
+      graceful.on('exit', () => setTimeout(done, 2500)) // allows for cleanup
+
+      setTimeout(() => {
+        spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true });
+        setTimeout(done, 1000)
+      }, 8000)
+      
+        // /T kills the whole process tree (Exec nodes, child scripts, etc.)
+        spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true });
     } else {
       proc.kill('SIGTERM');
     }
@@ -279,7 +307,7 @@ ipcMain.handle('clear-log', () => { logBuffer.length = 0; });
 ipcMain.handle('set-settings', (_e, patch: Settings) => {
   const portChanged = patch.port !== undefined && patch.port !== settings.port;
   settings = { ...settings, ...patch };
-  settings.port = Math.min(65535, Math.max(1, Math.trunc(Number(settings.port)) || 1880));
+  settings.port = Math.min(65535, Math.max(1024, Math.trunc(Number(settings.port)) || 1880));
   saveSettings();
   app.setLoginItemSettings({ openAtLogin: !!settings.launchAtLogin });
   emitState();
@@ -294,6 +322,7 @@ app.on('second-instance', () => {
 
 app.whenReady().then(() => {
   loadSettings();
+  app.setLoginItemSettings({ openAtLogin: !!settings.launchAtLogin });
   createWindow();
   createTray();
   checkLatest();
